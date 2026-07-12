@@ -136,6 +136,8 @@ def walk_forward(
 
     refit_dates: list[pd.Timestamp] = []
     bias_correction = 0.0
+    total_bias_sum = 0.0
+    total_bias_count = 0
     all_dates, all_obs, all_pred, all_bias = [], [], [], []
 
     # Refits train on [train_start, cur_start).  A None train_start replicates
@@ -221,7 +223,10 @@ def walk_forward(
             preds = preds + bias_correction
             valid = ~np.isnan(obs)
             if valid.any():
-                bias_correction = float(np.nanmean(obs[valid] - preds[valid] + bias_correction))
+                chunk_err = obs[valid] - (preds[valid] - bias_correction)
+                total_bias_sum += float(np.sum(chunk_err))
+                total_bias_count += int(np.sum(valid))
+                bias_correction = total_bias_sum / total_bias_count
         all_dates.extend(target_dates)
         all_obs.extend(obs.tolist())
         all_pred.extend(preds.tolist())

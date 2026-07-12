@@ -27,7 +27,7 @@ class ExtremeThresholds:
 
 
 def regional_thresholds(streamflow: pd.Series,
-                        years_required: int = 20) -> ExtremeThresholds:
+                        years_required: int = 30) -> ExtremeThresholds:
     """Compute Q5/Q95/Q99 from the full available record."""
     s = streamflow.dropna()
     n_years = len(s) / 365.25
@@ -65,9 +65,9 @@ def warning_labels(observed_flow: pd.Series,
         # shift(-L) aligns future values so that rolling(L) collects exactly
         # [t+1, ..., t+L] — the correct forward-looking window for lead time L.
         # (shift(-1).rolling(L) was incorrect: it mixed past and future values.)
-        future = observed_flow.shift(-L).rolling(L, min_periods=1).apply(
+        future = observed_flow.rolling(L, min_periods=1).apply(
             lambda w: float(cmp(w).any()), raw=False
-        )
+        ).shift(-L)
         out[f"{kind}_{percentile}_lead{L}d"] = (future > 0).astype(float).fillna(0.0)
     return out
 
@@ -103,7 +103,7 @@ def predicted_warning_probabilities(predicted_flow: pd.Series,
         # P(any event in [t+1, ..., t+L]) = 1 - prod(1-p_i) for i in t+1..t+L
         # shift(-L).rolling(L) collects exactly log(1-p[t+1])..log(1-p[t+L])
         any_event = 1.0 - np.exp(
-            log1m.shift(-L).rolling(L, min_periods=1).sum()
+            log1m.rolling(L, min_periods=1).sum().shift(-L)
         )
         out[f"{kind}_{percentile}_lead{L}d"] = any_event.fillna(0.0)
     return out
