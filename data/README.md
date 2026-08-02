@@ -33,3 +33,6 @@ print('CAMELS layout OK')
 ```
 
 Configs set `data.camels_root: data` in `configs/*.yaml`.
+
+`data/readme.txt` is the upstream CAMELS attributes citation/history file
+(kept for provenance). Use **this** README for download and layout instructions.

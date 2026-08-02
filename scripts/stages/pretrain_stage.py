@@ -108,10 +108,12 @@ def run_pretrain(cfg: ExperimentConfig) -> None:
                                        sequence_length=seq_len)
 
     bs = cfg.training.get("batch_size", 256)
-    train_loader = DataLoader(train_ds, batch_size=bs, shuffle=True,
-                              num_workers=cfg.data.get("num_workers", 0))
-    val_loader = DataLoader(val_ds, batch_size=bs, shuffle=False,
-                            num_workers=cfg.data.get("num_workers", 0))
+    n_workers = int(cfg.data.get("num_workers", 0))
+    loader_kwargs: dict = {"num_workers": n_workers}
+    if torch.cuda.is_available():
+        loader_kwargs["pin_memory"] = True
+    train_loader = DataLoader(train_ds, batch_size=bs, shuffle=True, **loader_kwargs)
+    val_loader = DataLoader(val_ds, batch_size=bs, shuffle=False, **loader_kwargs)
 
     model_cfg = EALSTMConfig(
         dynamic_input_size=len(DYNAMIC_FEATURES),

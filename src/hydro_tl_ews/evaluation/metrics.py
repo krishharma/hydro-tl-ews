@@ -42,17 +42,29 @@ def pbias(y_true: np.ndarray, y_pred: np.ndarray) -> float:
 
 
 def auc_roc(y_true: np.ndarray, p_pred: np.ndarray) -> float:
-    """Area under ROC for a binary label and a probability/score vector."""
+    """Area under ROC for a binary label and a probability/score vector.
+
+    Uses midranks so tied scores (common for saturated EWS probabilities)
+    yield the correct Mann–Whitney AUC (all ties → 0.5).
+    """
     y_true, p_pred = _drop_nan(y_true.astype(float), p_pred)
     pos = y_true == 1
     neg = y_true == 0
-    n_pos, n_neg = pos.sum(), neg.sum()
+    n_pos, n_neg = int(pos.sum()), int(neg.sum())
     if n_pos == 0 or n_neg == 0:
         return float("nan")
-    order = np.argsort(p_pred)
-    ranks = np.empty_like(order, dtype=float)
-    ranks[order] = np.arange(1, len(p_pred) + 1)
-    rank_sum_pos = ranks[pos].sum()
+    order = np.argsort(p_pred, kind="mergesort")
+    ranks = np.empty(len(p_pred), dtype=float)
+    i = 0
+    while i < len(order):
+        j = i + 1
+        while j < len(order) and p_pred[order[j]] == p_pred[order[i]]:
+            j += 1
+        # Average ranks for a tied block (1-based ranks).
+        mid = 0.5 * ((i + 1) + j)
+        ranks[order[i:j]] = mid
+        i = j
+    rank_sum_pos = float(ranks[pos].sum())
     return float((rank_sum_pos - n_pos * (n_pos + 1) / 2) / (n_pos * n_neg))
 
 

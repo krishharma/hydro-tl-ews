@@ -67,14 +67,18 @@ class WalkForwardResult:
 def _build_loader(forcings: pd.DataFrame, streamflow: pd.Series,
                   attrs: pd.Series, dyn_norm: Normalizer,
                   static_norm: StaticNormalizer, cfg: WalkForwardConfig,
-                  shuffle: bool = True) -> DataLoader | None:
+                  shuffle: bool = True,
+                  ) -> tuple[DataLoader, np.ndarray] | tuple[None, None]:
     f, q = quality_control(forcings, streamflow)
     f, q = align_forcing_streamflow(f, q)
     f_norm = dyn_norm.transform(f)[DYNAMIC_FEATURES]
-    X, y = make_sequences(f_norm.to_numpy(), q.to_numpy(),
-                          sequence_length=cfg.sequence_length)
+    X, y, dates = make_sequences(
+        f_norm.to_numpy(), q.to_numpy(),
+        sequence_length=cfg.sequence_length,
+        index=f.index.to_numpy(),
+    )
     if len(X) == 0:
-        return None
+        return None, None
     statics = static_norm.transform(attrs.to_frame().T).reindex(
         columns=STATIC_ATTRIBUTES).to_numpy().astype(np.float32)[0]
     S = np.tile(statics, (len(X), 1))
@@ -83,7 +87,10 @@ def _build_loader(forcings: pd.DataFrame, streamflow: pd.Series,
         torch.from_numpy(S),
         torch.from_numpy(y),
     )
-    return DataLoader(ds, batch_size=cfg.batch_size, shuffle=shuffle)
+    loader_kwargs: dict = {"batch_size": cfg.batch_size, "shuffle": shuffle}
+    if training_device() == "cuda":
+        loader_kwargs["pin_memory"] = True
+    return DataLoader(ds, **loader_kwargs), dates
 
 
 @torch.no_grad()
@@ -162,7 +169,7 @@ def walk_forward(
             val_hist_start = val_start - pd.Timedelta(days=cfg.sequence_length - 1)
             if train_start is not None:
                 val_hist_start = max(val_hist_start, train_start)
-            val_loader = _build_loader(
+            val_loader, _ = _build_loader(
                 target_basin.forcings.loc[val_hist_start:train_end],
                 target_basin.streamflow.loc[val_hist_start:train_end],
                 target_basin.attributes, dyn_norm, static_norm, cfg,
@@ -170,7 +177,7 @@ def walk_forward(
             )
             if val_loader is not None:
                 fit_end = val_start - pd.Timedelta(days=1)
-        train_loader = _build_loader(
+        train_loader, _ = _build_loader(
             target_basin.forcings.loc[train_start:fit_end],
             target_basin.streamflow.loc[train_start:fit_end],
             target_basin.attributes, dyn_norm, static_norm, cfg, shuffle=True,
@@ -181,7 +188,7 @@ def walk_forward(
             # val_loader=None gracefully).
             val_loader = None
             fit_end = train_end
-            train_loader = _build_loader(
+            train_loader, _ = _build_loader(
                 target_basin.forcings.loc[train_start:fit_end],
                 target_basin.streamflow.loc[train_start:fit_end],
                 target_basin.attributes, dyn_norm, static_norm, cfg,
@@ -204,7 +211,7 @@ def walk_forward(
         eval_flow = target_basin.streamflow.loc[
             cur_start - pd.Timedelta(days=cfg.sequence_length - 1):chunk_end
         ]
-        eval_loader = _build_loader(
+        eval_loader, target_dates = _build_loader(
             eval_forcings, eval_flow, target_basin.attributes,
             dyn_norm, static_norm, cfg, shuffle=False,
         )
@@ -212,11 +219,12 @@ def walk_forward(
             cur_start = chunk_end + pd.Timedelta(days=1)
             continue
         preds = _predict_window(model, eval_loader, device=device)
-        # Sequence target dates correspond to last day of each window,
-        # i.e. the days between cur_start and chunk_end inclusive.
-        target_dates = pd.date_range(cur_start, periods=len(preds), freq="D")
-        target_dates = target_dates[target_dates <= chunk_end]
-        preds = preds[: len(target_dates)]
+        # Use the actual surviving window target dates (NaN drops can create gaps).
+        target_dates = pd.DatetimeIndex(target_dates)
+        keep = (target_dates >= cur_start) & (target_dates <= chunk_end)
+        keep_arr = np.asarray(keep, dtype=bool)
+        target_dates = target_dates[keep_arr]
+        preds = preds[keep_arr]
         obs = target_basin.streamflow.reindex(target_dates).to_numpy()
 
         if cfg.online_bias_correction:

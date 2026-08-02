@@ -59,7 +59,8 @@ def main(argv: list[str] | None = None) -> int:
     set_global_seed(cfg.seed)
     log.info("Loaded config: %s | stage=%s", cfg.name, cfg.stage)
 
-    if args.smoke:
+    # Synthetic configs always take the smoke path (``--smoke`` still works).
+    if args.smoke or cfg.data.get("source") == "synthetic":
         try:
             from .smoke_pipeline import run_smoke  # type: ignore
         except ImportError:

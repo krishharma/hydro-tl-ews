@@ -64,17 +64,24 @@ def align_forcing_streamflow(
 
 
 def make_sequences(forcings: np.ndarray, streamflow: np.ndarray,
-                   sequence_length: int = 365) -> tuple[np.ndarray, np.ndarray]:
+                   sequence_length: int = 365,
+                   index: np.ndarray | pd.DatetimeIndex | None = None,
+                   ) -> tuple[np.ndarray, np.ndarray] | tuple[np.ndarray, np.ndarray, np.ndarray]:
     """Convert (T, F) forcings + (T,) streamflow into (N, L, F) / (N,) windows.
 
     Each sample uses the previous ``sequence_length`` forcings to predict the
     streamflow at the *current* day (i.e. the target is right-aligned).
+
+    When ``index`` is provided, also return the target dates of surviving
+    windows (after NaN filtering) so callers can align predictions correctly.
     """
     T = forcings.shape[0]
     if T < sequence_length:
-        return (np.empty((0, sequence_length, forcings.shape[1]), dtype=np.float32),
-                np.empty((0,), dtype=np.float32))
-    n = T - sequence_length + 1
+        empty_x = np.empty((0, sequence_length, forcings.shape[1]), dtype=np.float32)
+        empty_y = np.empty((0,), dtype=np.float32)
+        if index is None:
+            return empty_x, empty_y
+        return empty_x, empty_y, np.empty((0,), dtype="datetime64[ns]")
     X = np.lib.stride_tricks.sliding_window_view(
         forcings, window_shape=sequence_length, axis=0
     ).transpose(0, 2, 1).astype(np.float32)
@@ -83,4 +90,8 @@ def make_sequences(forcings: np.ndarray, streamflow: np.ndarray,
     # Avoid materialising a (N, L, F) bool intermediate (~22 MiB): NaN propagates
     # through sum, so X.sum() is NaN iff any element in the sample is NaN.
     mask = ~np.isnan(y) & ~np.isnan(X.sum(axis=(1, 2)))
-    return X[mask], y[mask]
+    X_out, y_out = X[mask], y[mask]
+    if index is None:
+        return X_out, y_out
+    dates = np.asarray(index[sequence_length - 1:])[mask]
+    return X_out, y_out, dates

@@ -146,7 +146,10 @@ def climatology_probs(hist_flow: pd.Series, eval_index: pd.DatetimeIndex,
     log1m = np.log1p(-np.clip(daily, 1e-9, 1 - 1e-9))
     out = pd.DataFrame(index=eval_index)
     for L in LEADS:
-        any_event = 1.0 - np.exp(log1m.shift(-L).rolling(L, min_periods=1).sum())
+        # Match model EWS composition: rolling then shift(-L), full windows only.
+        any_event = 1.0 - np.exp(
+            log1m.rolling(L, min_periods=L).sum().shift(-L)
+        )
         out[f"lead{L}d"] = any_event.fillna(0.0)
     return out
 

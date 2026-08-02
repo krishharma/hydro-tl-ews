@@ -62,9 +62,12 @@ class EALSTMCell(nn.Module):
             self.W_x.bias[0:H].fill_(self.cfg.initial_forget_bias)
 
     def forward(self, x_t: torch.Tensor, s: torch.Tensor,
-                state: tuple[torch.Tensor, torch.Tensor]):
+                state: tuple[torch.Tensor, torch.Tensor],
+                i_t: torch.Tensor | None = None):
         h_prev, c_prev = state
-        i_t = torch.sigmoid(self.W_i(s))                      # static input gate
+        # Static input gate is time-invariant — callers may precompute ``i_t``.
+        if i_t is None:
+            i_t = torch.sigmoid(self.W_i(s))
         gates = self.W_x(x_t) + self.W_h(h_prev)
         f_t, g_t, o_t = gates.chunk(3, dim=-1)
         f_t = torch.sigmoid(f_t)
@@ -96,9 +99,11 @@ class EALSTM(nn.Module):
         H = self.cfg.hidden_size
         h = x.new_zeros(B, H)
         c = x.new_zeros(B, H)
+        # Precompute static gate once per sequence (was recomputed every timestep).
+        i_t = torch.sigmoid(self.cell.W_i(s))
         outputs = []
         for t in range(L):
-            h, c = self.cell(x[:, t, :], s, (h, c))
+            h, c = self.cell(x[:, t, :], s, (h, c), i_t=i_t)
             if return_sequence:
                 outputs.append(h)
         last_h = self.dropout(h)

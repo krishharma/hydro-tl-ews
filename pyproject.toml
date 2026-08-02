@@ -26,7 +26,7 @@ nwis = ["dataretrieval>=1.0"]
 dev = ["pytest>=7", "pytest-cov", "ruff"]
 
 [project.scripts]
-hydro-tl-ews = "scripts.run_experiment:main"
+hydro-tl-ews = "hydro_tl_ews.cli:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]

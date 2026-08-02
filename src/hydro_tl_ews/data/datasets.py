@@ -102,8 +102,9 @@ class MultiBasinSequenceDataset(Dataset):
             ).reindex(columns=STATIC_ATTRIBUTES).to_numpy().astype(np.float32)[0]
 
             bpos = len(self._forcings)
-            self._forcings.append(f_norm)
-            self._statics.append(statics)
+            # Contiguous once at build time so __getitem__ avoids a copy per sample.
+            self._forcings.append(np.ascontiguousarray(f_norm))
+            self._statics.append(np.ascontiguousarray(statics))
             sample_basin.append(np.full(valid_ends.size, bpos, dtype=np.int32))
             sample_end.append(valid_ends.astype(np.int32))
             y_parts.append(q_arr[valid_ends])
@@ -134,9 +135,9 @@ class MultiBasinSequenceDataset(Dataset):
         L = self.sequence_length
         bpos = int(self._sample_basin[idx])
         end = int(self._sample_end[idx])
-        window = self._forcings[bpos][end - L + 1:end + 1]  # (L, F_dyn) view
+        window = self._forcings[bpos][end - L + 1:end + 1]  # (L, F_dyn) contiguous view
         return (
-            torch.from_numpy(np.ascontiguousarray(window)),
+            torch.from_numpy(window),
             torch.from_numpy(self._statics[bpos]),
             torch.tensor(float(self.y[idx]), dtype=torch.float32),
             torch.tensor(float(self.basin_std[idx]), dtype=torch.float32),

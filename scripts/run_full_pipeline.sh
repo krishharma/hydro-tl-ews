@@ -1,5 +1,9 @@
 #!/usr/bin/env bash
-# Run the full CAMELS pipeline (stages 1–7). Requires GPU + data/ (camels_root: data).
+# Run the single-target CAMELS pipeline (Merced / Happy Isles).
+# Default chain uses the 200-donor pretrain so downstream configs' checkpoint
+# paths match (pretrain_subset200.pt → finetune_*.pt → walk_forward).
+# For full CAMELS regional pretrain, run configs/pretrain.yaml separately and
+# point later configs at results/checkpoints/pretrain.pt (or use multi-target).
 set -euo pipefail
 cd "$(dirname "$0")/.."
 mkdir -p results/logs results/checkpoints results/history
@@ -19,8 +23,11 @@ if [[ ! -d data/basin_dataset_public_v1p2 ]]; then
   exit 1
 fi
 
+# Ensure src/ is importable when not installed editable.
+export PYTHONPATH="${PWD}/src${PYTHONPATH:+:$PYTHONPATH}"
+
 STAGES=(
-  pretrain
+  pretrain_subset200
   zero_shot
   finetune_conservative
   finetune_progressive

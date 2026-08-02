@@ -45,6 +45,12 @@ def test_auc_perfect_separation():
     assert auc_roc(labels, scores) == 1.0
 
 
+def test_auc_all_ties_is_half():
+    labels = np.array([0, 1, 0, 1])
+    scores = np.array([0.5, 0.5, 0.5, 0.5])
+    assert abs(auc_roc(labels, scores) - 0.5) < 1e-9
+
+
 def test_brier_zero():
     labels = np.array([1, 0, 1, 0])
     probs = np.array([1.0, 0.0, 1.0, 0.0])

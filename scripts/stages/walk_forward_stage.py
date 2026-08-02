@@ -32,6 +32,29 @@ from hydro_tl_ews.xai.shap_analysis import explain_predictions, global_importanc
 log = get_logger(__name__)
 
 
+def _warmup_residual_sigma(model, target, dyn_norm, static_norm, wf_cfg,
+                           train_start, train_end) -> float | None:
+    """Estimate Gaussian residual σ on the warmup window for EWS mapping."""
+    from hydro_tl_ews.training.walk_forward import _build_loader, _predict_window
+
+    start = pd.Timestamp(train_start) if train_start else target.forcings.index.min()
+    end = pd.Timestamp(train_end)
+    loader, dates = _build_loader(
+        target.forcings.loc[start:end],
+        target.streamflow.loc[start:end],
+        target.attributes, dyn_norm, static_norm, wf_cfg, shuffle=False,
+    )
+    if loader is None or dates is None or len(dates) < 30:
+        return None
+    preds = _predict_window(model, loader)
+    obs = target.streamflow.reindex(pd.DatetimeIndex(dates)).to_numpy()
+    resid = obs - preds
+    resid = resid[~np.isnan(resid)]
+    if len(resid) < 30:
+        return None
+    return max(float(np.std(resid)), 1e-3)
+
+
 def run_walk_forward(cfg: ExperimentConfig) -> None:
     ds = CamelsDataset(cfg.data["camels_root"])
     target_id = cfg.data["target_basin"]
@@ -44,6 +67,12 @@ def run_walk_forward(cfg: ExperimentConfig) -> None:
         target.streamflow = target.streamflow.loc[full_period[0]:full_period[1]]
 
     init_end = cfg.walk_forward["initial_train_end"]
+    if not cfg.walk_forward.get("refit_train_start"):
+        log.warning(
+            "walk_forward.refit_train_start is unset — refits may train on the "
+            "full loaded record and break the data-scarce protocol. "
+            "Set it to the warmup start (e.g. 2009-01-01)."
+        )
     dyn_norm = Normalizer.fit(target.forcings.loc[:init_end])
     static_norm = StaticNormalizer.fit(attrs.loc[:, STATIC_ATTRIBUTES])
 
@@ -78,9 +107,24 @@ def run_walk_forward(cfg: ExperimentConfig) -> None:
     result = walk_forward(model, target, dyn_norm, static_norm, wf_cfg,
                           refit_fn=refit_fn)
 
-    rfa = regional_thresholds(target.streamflow, years_required=20)
+    # Thresholds from the pre-evaluation record only (avoid eval-period leakage).
+    threshold_series = target.streamflow.loc[:init_end]
+    rfa = regional_thresholds(threshold_series, years_required=20)
     obs_s = pd.Series(result.observed, index=result.dates)
     pred_s = pd.Series(result.predicted, index=result.dates)
+
+    # Residual σ from warmup hindcast with the loaded checkpoint (before WF
+    # adaptation). Avoids the default 0.25·Q5 collapse for drought probs.
+    ews_sigma = _warmup_residual_sigma(
+        model, target, dyn_norm, static_norm, wf_cfg,
+        train_start=cfg.walk_forward.get("refit_train_start"),
+        train_end=init_end,
+    )
+    if ews_sigma is not None:
+        log.info("EWS residual sigma from warmup: %.4f", ews_sigma)
+    else:
+        log.warning("Could not estimate warmup residual sigma; using default "
+                    "0.25·threshold (drought probs may saturate).")
 
     lead_times = tuple(cfg.evaluation.get("lead_times", [1, 3, 7]))
     threshold_specs = cfg.evaluation.get(
@@ -99,9 +143,10 @@ def run_walk_forward(cfg: ExperimentConfig) -> None:
         percentile = spec["percentile"]
         labels = warning_labels(obs_s, rfa, kind=kind, percentile=percentile,
                                 lead_times=lead_times)
-        probs = predicted_warning_probabilities(pred_s, rfa, kind=kind,
-                                                percentile=percentile,
-                                                lead_times=lead_times)
+        probs = predicted_warning_probabilities(
+            pred_s, rfa, kind=kind, percentile=percentile,
+            sigma=ews_sigma, lead_times=lead_times,
+        )
         warning_artifacts.append(labels)
         warning_artifacts.append(probs.add_suffix("_prob"))
         for col in labels.columns:
