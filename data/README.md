@@ -36,3 +36,18 @@ Configs set `data.camels_root: data` in `configs/*.yaml`.
 
 `data/readme.txt` is the upstream CAMELS attributes citation/history file
 (kept for provenance). Use **this** README for download and layout instructions.
+
+## Mini sample (for quick local tests)
+
+If you do not have full CAMELS yet, generate a tiny CAMELS-compatible archive:
+
+```bash
+python scripts/make_sample_camels.py
+# → data/sample_camels/   (~8 basins, ~15 years, synthetic)
+
+python scripts/run_sample_pipeline.py
+# → results/sample/   (pretrain → fine-tune → walk-forward in a few minutes)
+```
+
+This exercises the real `CamelsDataset` loader. It is **not** real CAMELS
+observations — only a layout-compatible synthetic stand-in.

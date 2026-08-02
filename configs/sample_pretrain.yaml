@@ -1,0 +1,39 @@
+# Quick test against the mini sample under data/sample_camels/.
+# Prefer: python scripts/run_sample_pipeline.py
+# This config is for single-stage runs after the sample exists.
+name: sample_pretrain
+stage: pretrain
+seed: 7
+
+data:
+  source: camels
+  camels_root: data/sample_camels
+  target_basin: "11264500"
+  target_basins: ["11264500"]
+  exclusion_buffer_km: null
+  similar_donor_count: null
+  pretrain_period: ["1995-01-01", "2004-12-31"]
+  validation_period: ["2005-01-01", "2006-12-31"]
+  sequence_length: 90
+  num_workers: 0
+  static_feature_set: full
+
+model:
+  hidden_size: 32
+  dropout: 0.2
+  initial_forget_bias: 3.0
+
+training:
+  batch_size: 64
+  epochs: 4
+  patience: 3
+  learning_rate: 1.0e-3
+  weight_decay: 0.0
+  clip_grad_norm: 1.0
+
+evaluation:
+  metrics: [NSE, KGE, PBIAS]
+
+output:
+  checkpoint_path: results/sample/checkpoints/pretrain.pt
+  history_path: results/sample/history/pretrain.json

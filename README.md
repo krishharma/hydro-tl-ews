@@ -86,6 +86,16 @@ python -m pytest -q
 
 Writes under `results/smoke/` (synthetic end-to-end check).
 
+### 1b. Mini sample CAMELS (real loader, a few minutes)
+
+No full CAMELS download required. Generates a tiny CAMELS-compatible archive
+and runs pretrain → fine-tune → walk-forward through `CamelsDataset`:
+
+```bash
+python scripts/make_sample_camels.py      # → data/sample_camels/ (~4 MB)
+python scripts/run_sample_pipeline.py     # → results/sample/
+```
+
 ### 2. Single stage (config-driven)
 
 ```bash
@@ -202,6 +212,7 @@ hydro-tl-ews/
 
 ## Documentation
 
+- [`docs/README.pdf`](docs/README.pdf) — downloadable PDF of this README
 - [`docs/RUNNING.md`](docs/RUNNING.md) — detailed run recipes and compute notes
 - [`docs/OUTPUTS.md`](docs/OUTPUTS.md) — file formats and how to read them
 - [`docs/KNOWN_LIMITATIONS.md`](docs/KNOWN_LIMITATIONS.md) — remaining science/UX caveats

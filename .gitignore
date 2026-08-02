@@ -12,11 +12,13 @@ dist/
 .env
 
 # CAMELS (download separately — see data/README.md)
-# Ignore all downloaded data; keep only the docs/placeholder.
+# Ignore all downloaded data; keep only the docs/placeholder + mini sample.
 data/*
 !data/README.md
 !data/readme.txt
 !data/.gitkeep
+!data/sample_camels/
+!data/sample_camels/**
 *.zip
 
 # Generated outputs (created by pipeline scripts)
