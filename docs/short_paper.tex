@@ -65,9 +65,11 @@ Although a full continental CAMELS-US run was put off because of compute
 limits, a Midwest laptop study was finished using the supervisor's advice to
 optimize for what this PC can handle. The target was Lick Creek near Perry, MO
 (USGS~05507600), with 17 similar Midwest donor basins. Results and a check
-against the project objectives are in Section~\ref{sec:results}. The original
-Merced / multi-regime plan is still in the repository configs; basins for that
-larger study are listed in Table~\ref{tab:basins}.
+against the project objectives are in Section~\ref{sec:results}. A later
+sensitivity pass tried a smaller donor pool, mean daily temperature, and
+multi-seed averaging (Section~\ref{sec:opt}); it did not beat the 17-donor
+benchmark. The original Merced / multi-regime plan is still in the repository
+configs; basins for that larger study are listed in Table~\ref{tab:basins}.
 
 \section{Data}
 
@@ -269,6 +271,10 @@ Midwest laptop study (what was actually run):
 \href{https://github.com/krishharma/hydro-tl-ews/blob/main/scripts/run_midwest_mini.py}{run\_midwest\_mini.py}
 with configs under
 \href{https://github.com/krishharma/hydro-tl-ews/tree/main/configs/midwest_mini}{configs/midwest\_mini/}.
+The supervisor-optimization follow-up is
+\href{https://github.com/krishharma/hydro-tl-ews/blob/main/scripts/run_midwest_opt.py}{run\_midwest\_opt.py}
+with
+\href{https://github.com/krishharma/hydro-tl-ews/tree/main/configs/midwest_opt}{configs/midwest\_opt/}.
 Larger optional workflows are still in
 \href{https://github.com/krishharma/hydro-tl-ews/blob/main/scripts/run_full_pipeline.sh}{run\_full\_pipeline.sh}
 and
@@ -468,5 +474,56 @@ This paper does \emph{not} claim continental CAMELS performance, snowmelt-regime
 transfer, or a seven-basin multi-regime study. Those stay as future work if more
 compute and disk become available. A longer narrative is in
 \href{https://github.com/krishharma/hydro-tl-ews/blob/main/docs/OBSERVATIONS_MIDWEST.md}{docs/OBSERVATIONS\_MIDWEST.md}.
+
+\subsection{Sensitivity to further optimizations}
+\label{sec:opt}
+
+After the Midwest pilot, the supervisor suggested a few additional changes that
+had shown up in other recent hydrology work. These were tested on the same Lick
+Creek target (USGS~05507600).
+
+First, instead of 17 similar Midwest donors, only about eight of the nearest
+neighbors were kept (Pool et~al., 2021, \emph{Water Resour.\ Res.}). Asking for
+the seven nearest left only five basins after gauges missing from the partial
+CAMELS extract were dropped, so later runs asked for the ten nearest and kept
+eight with local files. Second, the LSTM forget-gate bias was already set to
+$+3.0$ in the baseline, so that change did not need to be added. Third, daily
+minimum and maximum temperature were replaced with a single daily mean
+temperature. Fourth, the same setup was trained with three random seeds (42,
+123, and 456), and the daily streamflow predictions were averaged before
+scoring.
+
+None of these changes beat the original 17-donor Midwest pilot on continuous
+skill (Table~\ref{tab:opt_metrics}). For 2011--2014, walk-forward NSE was 0.179
+for the baseline, 0.138 when donors were pruned but Tmin/Tmax were kept, and
+0.165 for the combined mean-temperature plus three-seed ensemble with eight
+donors. Fine-tune NSE followed the same pattern: 0.160, 0.113, and 0.133. In
+every setting, transfer learning still beat training from scratch under the
+two-year scarce-data protocol.
+
+\begin{table}[ht]
+  \centering
+  \caption{Sensitivity to supervisor optimizations (USGS 05507600, 2011--2014 NSE).}
+  \label{tab:opt_metrics}
+  \small
+  \renewcommand{\arraystretch}{1.1}
+  \begin{tabular}{@{}lrrrr@{}}
+    \toprule
+    \textbf{Setting} & \textbf{Donors} & \textbf{FT} & \textbf{Local} & \textbf{WF} \\
+    \midrule
+    Baseline (Tmin+Tmax, seed 42) & 17 & 0.160 & 0.009 & 0.179 \\
+    Prune only (Tmin+Tmax, seed 42) & 8 & 0.113 & 0.009 & 0.138 \\
+    Prune + mean $T$ + 3-seed avg. & 8 & 0.133 & $-0.097$ & 0.165 \\
+    \bottomrule
+  \end{tabular}
+\end{table}
+
+So the 17-donor Midwest run remains the main Lick Creek benchmark. The
+follow-up is still useful as a sensitivity check: a smaller donor pool and
+simpler temperature inputs did not improve continuous skill here, even though
+they cut compute a little and are easy to defend. Full numbers are in
+\href{https://github.com/krishharma/hydro-tl-ews/blob/main/docs/OBSERVATIONS_OPT.md}{docs/OBSERVATIONS\_OPT.md};
+the runner is
+\href{https://github.com/krishharma/hydro-tl-ews/blob/main/scripts/run_midwest_opt.py}{scripts/run\_midwest\_opt.py}.
 
 \end{document}

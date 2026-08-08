@@ -1,0 +1,45 @@
+# Supervisor-optimized Lick Creek pilot:
+# a) ~7–8 most-similar Midwest donors (request 10; file filter → ~8)
+# b) forget-gate bias +3.0 (already default)
+# c) mean daily temperature instead of Tmin/Tmax
+# d) seed overridden by multi-seed runner
+name: midwest_opt_pretrain
+stage: pretrain
+seed: 42
+
+data:
+  source: camels
+  camels_root: data
+  target_basin: "05507600"
+  target_basins: ["05507600"]
+  exclusion_buffer_km: 50
+  donor_bbox: [36.5, 49.5, -104.0, -80.5]
+  # Request 10 nearest; after exclusion + partial-extract file filter this yields ~7–8
+  # available Midwest donors (Pool et al. 2021–style small donor pool).
+  similar_donor_count: 10
+  dynamic_feature_set: mean_temp
+  pretrain_period: ["1995-10-01", "2008-09-30"]
+  validation_period: ["2008-10-01", "2010-09-30"]
+  sequence_length: 90
+  num_workers: 0
+  static_feature_set: full
+
+model:
+  hidden_size: 128
+  dropout: 0.4
+  initial_forget_bias: 3.0
+
+training:
+  batch_size: 128
+  epochs: 10
+  patience: 4
+  learning_rate: 1.0e-3
+  weight_decay: 0.0
+  clip_grad_norm: 1.0
+
+evaluation:
+  metrics: [NSE, KGE, PBIAS]
+
+output:
+  checkpoint_path: results/midwest_opt/seed_42/checkpoints/pretrain.pt
+  history_path: results/midwest_opt/seed_42/history/pretrain.json

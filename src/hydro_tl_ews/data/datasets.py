@@ -78,7 +78,12 @@ class MultiBasinSequenceDataset(Dataset):
             basin_std_val = float(np.nanstd(q.values)) if len(q) > 1 else 1.0
             basin_std_val = max(basin_std_val, 0.01)
 
-            f_norm = (dyn_normalizer.transform(f)[DYNAMIC_FEATURES]
+            # Use the columns present on the basin forcings (supports mean-temp
+            # feature sets where tmean replaces tmax/tmin).
+            dyn_cols = [c for c in dyn_normalizer.mean.index if c in f.columns]
+            if not dyn_cols:
+                dyn_cols = list(f.columns)
+            f_norm = (dyn_normalizer.transform(f)[dyn_cols]
                       .to_numpy().astype(np.float32))
             q_arr = q.to_numpy().astype(np.float32)
             T = f_norm.shape[0]

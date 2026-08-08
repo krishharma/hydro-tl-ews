@@ -1,0 +1,27 @@
+name: midwest_opt_local_baseline
+stage: local_baseline
+seed: 42
+
+data:
+  source: camels
+  camels_root: data
+  target_basin: "05507600"
+  dynamic_feature_set: mean_temp
+  warmup_period: ["2009-01-01", "2010-08-31"]
+  validation_period: ["2009-09-02", "2010-12-31"]
+  sequence_length: 90
+
+model:
+  hidden_size: 128
+  dropout: 0.4
+  initial_forget_bias: 3.0
+
+training:
+  batch_size: 64
+  epochs: 25
+  patience: 6
+  head_lr: 1.0e-3
+
+output:
+  checkpoint_path: results/midwest_opt/seed_42/checkpoints/local_baseline.pt
+  history_path: results/midwest_opt/seed_42/history/local_baseline.json

@@ -100,3 +100,9 @@ It does **not** claim continental CAMELS performance, snowmelt-regime transfer, 
 - Drought threshold Q5 resolved to 0.0 mm/d at this gauge (intermittent/low-flow behavior) — drought labels are therefore “near-zero flow” days.
 - Install `pyarrow` if parquet outputs are preferred; this run wrote `walk_forward.csv`.
 - SHAP static zeros are a single-basin attribution artifact, not proof that static attributes are unused.
+
+---
+
+## Follow-up: supervisor optimizations (2026-08-08)
+
+See [`OBSERVATIONS_OPT.md`](OBSERVATIONS_OPT.md). Combined donor pruning + mean temperature + 3-seed averaging did **not** beat this 17-donor baseline on continuous NSE/KGE; transfer ≫ local still held. Forget-gate bias +3.0 was already used here.

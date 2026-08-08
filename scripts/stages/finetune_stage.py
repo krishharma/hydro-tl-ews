@@ -9,11 +9,10 @@ import torch
 from torch.utils.data import DataLoader
 
 from hydro_tl_ews.data.camels import (
-    CamelsDataset,
-    DYNAMIC_FEATURES,
     STATIC_ATTRIBUTES,
 )
 from hydro_tl_ews.data.datasets import MultiBasinSequenceDataset
+from hydro_tl_ews.data.features import dynamic_features_from_cfg, open_camels
 from hydro_tl_ews.data.preprocessing import Normalizer, StaticNormalizer
 from hydro_tl_ews.models.ealstm import EALSTM, EALSTMConfig
 from hydro_tl_ews.training.trainer import Trainer
@@ -30,7 +29,7 @@ log = get_logger(__name__)
 
 
 def _setup(cfg: ExperimentConfig):
-    ds = CamelsDataset(cfg.data["camels_root"])
+    ds = open_camels(cfg)
     target_id = cfg.data["target_basin"]
     target = ds.load_basin(target_id)
     attrs_all = ds.load_attributes()
@@ -101,11 +100,13 @@ def run_local_baseline(cfg: ExperimentConfig) -> None:
     val_loader = (DataLoader(val_ds, batch_size=cfg.training.get("batch_size", 64),
                              shuffle=False) if len(val_ds) else None)
 
+    dyn_feats = dynamic_features_from_cfg(cfg)
     model_cfg = EALSTMConfig(
-        dynamic_input_size=len(DYNAMIC_FEATURES),
+        dynamic_input_size=len(dyn_feats),
         static_input_size=len(STATIC_ATTRIBUTES),
         hidden_size=cfg.model.get("hidden_size", 256),
         dropout=cfg.model.get("dropout", 0.4),
+        initial_forget_bias=cfg.model.get("initial_forget_bias", 3.0),
     )
     model = EALSTM(model_cfg)
     state = train_local_baseline(

@@ -33,6 +33,41 @@ DYNAMIC_FEATURES = [
     "dayl(s)",           # Day length
 ]
 
+# Supervisor optimization: replace Tmin/Tmax with a single daily mean temperature.
+DYNAMIC_FEATURES_MEAN_TEMP = [
+    "prcp(mm/day)",
+    "tmean(C)",
+    "srad(W/m2)",
+    "vp(Pa)",
+    "dayl(s)",
+]
+
+_RAW_DAYMET_COLUMNS = [
+    "prcp(mm/day)", "tmax(C)", "tmin(C)", "srad(W/m2)", "vp(Pa)", "dayl(s)",
+]
+
+
+def resolve_dynamic_features(feature_set: str = "full") -> list[str]:
+    """Return the dynamic forcing column list for a named feature set."""
+    key = (feature_set or "full").lower()
+    if key in {"mean_temp", "tmean", "mean_temperature"}:
+        return list(DYNAMIC_FEATURES_MEAN_TEMP)
+    return list(DYNAMIC_FEATURES)
+
+
+def select_dynamic_forcings(df: pd.DataFrame, feature_set: str = "full") -> pd.DataFrame:
+    """Project raw Daymet columns onto the requested dynamic feature set."""
+    feats = resolve_dynamic_features(feature_set)
+    out = df.copy()
+    if "tmean(C)" in feats and "tmean(C)" not in out.columns:
+        if not {"tmax(C)", "tmin(C)"}.issubset(out.columns):
+            raise KeyError("Cannot build tmean(C): tmax(C)/tmin(C) missing from forcings.")
+        out["tmean(C)"] = 0.5 * (out["tmax(C)"].astype(float) + out["tmin(C)"].astype(float))
+    missing = [c for c in feats if c not in out.columns]
+    if missing:
+        raise KeyError(f"Forcing columns missing for feature_set={feature_set!r}: {missing}")
+    return out[feats]
+
 # Canonical CAMELS attribute groups (Addor et al., 2017).  Subset chosen for
 # parity with regional EA-LSTM benchmarks.
 STATIC_ATTRIBUTES = [
@@ -76,7 +111,7 @@ class CamelsDataset:
             camels_topo.txt, camels_clim.txt, camels_soil.txt, ...
     """
 
-    def __init__(self, camels_root: str | Path):
+    def __init__(self, camels_root: str | Path, dynamic_feature_set: str = "full"):
         self.root = Path(camels_root)
         if not self.root.exists():
             raise FileNotFoundError(
@@ -84,6 +119,8 @@ class CamelsDataset:
                 f"Download from https://ral.ucar.edu/solutions/products/camels "
                 "or use synthetic_camels.SyntheticCamels for smoke tests."
             )
+        self.dynamic_feature_set = dynamic_feature_set or "full"
+        self.dynamic_features = resolve_dynamic_features(self.dynamic_feature_set)
         self._attributes: pd.DataFrame | None = None
         self._forcing_path_by_basin: Dict[str, Path] | None = None
         self._streamflow_path_by_basin: Dict[str, Path] | None = None
@@ -138,7 +175,7 @@ class CamelsDataset:
         df["date"] = pd.to_datetime(df[["Year", "Mnth", "Day"]].rename(
             columns={"Year": "year", "Mnth": "month", "Day": "day"}))
         df = df.set_index("date")
-        return df[DYNAMIC_FEATURES]
+        return select_dynamic_forcings(df[_RAW_DAYMET_COLUMNS], self.dynamic_feature_set)
 
     def load_streamflow(self, basin_id: str, area_km2: float | None = None) -> pd.Series:
         path = self._find_streamflow_file(basin_id)

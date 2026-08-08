@@ -7,7 +7,8 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 
-from hydro_tl_ews.data.camels import CamelsDataset, DYNAMIC_FEATURES, STATIC_ATTRIBUTES
+from hydro_tl_ews.data.camels import STATIC_ATTRIBUTES
+from hydro_tl_ews.data.features import open_camels
 from hydro_tl_ews.data.preprocessing import Normalizer, StaticNormalizer
 from hydro_tl_ews.evaluation.extreme_thresholds import (
     predicted_warning_probabilities,
@@ -56,7 +57,7 @@ def _warmup_residual_sigma(model, target, dyn_norm, static_norm, wf_cfg,
 
 
 def run_walk_forward(cfg: ExperimentConfig) -> None:
-    ds = CamelsDataset(cfg.data["camels_root"])
+    ds = open_camels(cfg)
     target_id = cfg.data["target_basin"]
     target = ds.load_basin(target_id)
     attrs = ds.load_attributes()
@@ -198,7 +199,8 @@ def run_walk_forward(cfg: ExperimentConfig) -> None:
         )
         f_hist, q_hist = quality_control(f_hist, q_hist)
         f_hist, q_hist = align_forcing_streamflow(f_hist, q_hist)
-        f_norm = dyn_norm.transform(f_hist)[DYNAMIC_FEATURES]
+        dyn_cols = [c for c in dyn_norm.mean.index if c in f_hist.columns] or list(f_hist.columns)
+        f_norm = dyn_norm.transform(f_hist)[dyn_cols]
         X_all, _ = make_sequences(f_norm.to_numpy(), q_hist.to_numpy(), sequence_length=seq_len)
         if len(X_all) >= 2:
             statics = static_norm.transform(target.attributes.to_frame().T).reindex(
@@ -206,7 +208,7 @@ def run_walk_forward(cfg: ExperimentConfig) -> None:
             S_all = np.tile(statics[0], (len(X_all), 1))
             bg = min(bg_size, len(X_all))
             smp = min(smp_size, len(X_all))
-            feat_names = [f"dyn_{k}" for k in DYNAMIC_FEATURES] + [f"static_{k}" for k in STATIC_ATTRIBUTES]
+            feat_names = [f"dyn_{k}" for k in dyn_cols] + [f"static_{k}" for k in STATIC_ATTRIBUTES]
             shap_result = explain_predictions(
                 model,
                 background_X=X_all[:bg],

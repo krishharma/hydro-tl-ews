@@ -8,8 +8,9 @@ import numpy as np
 import pandas as pd
 from torch.utils.data import DataLoader
 
-from hydro_tl_ews.data.camels import CamelsDataset, STATIC_ATTRIBUTES
+from hydro_tl_ews.data.camels import STATIC_ATTRIBUTES
 from hydro_tl_ews.data.datasets import MultiBasinSequenceDataset
+from hydro_tl_ews.data.features import open_camels
 from hydro_tl_ews.data.preprocessing import Normalizer, StaticNormalizer
 from hydro_tl_ews.evaluation.metrics import kge, nse, pbias
 from hydro_tl_ews.training.trainer import Trainer
@@ -21,7 +22,7 @@ log = get_logger(__name__)
 
 
 def run_zero_shot(cfg: ExperimentConfig) -> None:
-    ds = CamelsDataset(cfg.data["camels_root"])
+    ds = open_camels(cfg)
     target_id = cfg.data["target_basin"]
     target = ds.load_basin(target_id)
     attrs = ds.load_attributes()

@@ -71,7 +71,10 @@ def _build_loader(forcings: pd.DataFrame, streamflow: pd.Series,
                   ) -> tuple[DataLoader, np.ndarray] | tuple[None, None]:
     f, q = quality_control(forcings, streamflow)
     f, q = align_forcing_streamflow(f, q)
-    f_norm = dyn_norm.transform(f)[DYNAMIC_FEATURES]
+    dyn_cols = [c for c in dyn_norm.mean.index if c in f.columns]
+    if not dyn_cols:
+        dyn_cols = list(f.columns)
+    f_norm = dyn_norm.transform(f)[dyn_cols]
     X, y, dates = make_sequences(
         f_norm.to_numpy(), q.to_numpy(),
         sequence_length=cfg.sequence_length,

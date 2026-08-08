@@ -9,12 +9,11 @@ import torch
 from torch.utils.data import DataLoader
 
 from hydro_tl_ews.data.camels import (
-    CamelsDataset,
-    DYNAMIC_FEATURES,
     STATIC_ATTRIBUTES,
 )
 from hydro_tl_ews.data.clustering import select_donor_basins
 from hydro_tl_ews.data.datasets import MultiBasinSequenceDataset
+from hydro_tl_ews.data.features import dynamic_features_from_cfg, open_camels
 from hydro_tl_ews.data.preprocessing import Normalizer, StaticNormalizer
 from hydro_tl_ews.models.ealstm import EALSTM, EALSTMConfig
 from hydro_tl_ews.training.trainer import Trainer
@@ -95,7 +94,8 @@ def exclude_targets_and_buffer(attrs, donors: list[str], targets: list[str],
 
 
 def run_pretrain(cfg: ExperimentConfig) -> None:
-    ds = CamelsDataset(cfg.data["camels_root"])
+    ds = open_camels(cfg)
+    dyn_feats = dynamic_features_from_cfg(cfg)
     attrs = ds.load_attributes()
     target_basin = cfg.data.get("target_basin")
     # target_basins (list) extends the single-target exclusion so one pretrain
@@ -152,8 +152,23 @@ def run_pretrain(cfg: ExperimentConfig) -> None:
             "Check CAMELS extract and donor_bbox / similar_donor_count settings."
         )
 
-    log.info("Pre-training on %d basins (targets excluded: %s)",
-             len(donors), ", ".join(targets))
+    log.info("Pre-training on %d basins | dynamic features (%d): %s | targets excluded: %s",
+             len(donors), len(dyn_feats), ", ".join(dyn_feats), ", ".join(targets))
+    log.info("Donor basin IDs: %s", ", ".join(donors))
+    donor_list_path = Path(cfg.output.get(
+        "donor_list_path",
+        str(Path(cfg.output.get("checkpoint_path",
+                                "results/checkpoints/pretrain.pt")).parent
+            / "donor_basins.json")))
+    donor_list_path.parent.mkdir(parents=True, exist_ok=True)
+    donor_list_path.write_text(json.dumps({
+        "n_donors": len(donors),
+        "donors": donors,
+        "dynamic_features": dyn_feats,
+        "dynamic_feature_set": str(cfg.data.get("dynamic_feature_set", "full")),
+        "initial_forget_bias": float(cfg.model.get("initial_forget_bias", 3.0)),
+        "target_basins": targets,
+    }, indent=2))
     basins = ds.load_basins(donors)
 
     pretrain_period = tuple(cfg.data["pretrain_period"])
@@ -180,7 +195,7 @@ def run_pretrain(cfg: ExperimentConfig) -> None:
     val_loader = DataLoader(val_ds, batch_size=bs, shuffle=False, **loader_kwargs)
 
     model_cfg = EALSTMConfig(
-        dynamic_input_size=len(DYNAMIC_FEATURES),
+        dynamic_input_size=len(dyn_feats),
         static_input_size=len(STATIC_ATTRIBUTES),
         hidden_size=cfg.model.get("hidden_size", 256),
         dropout=cfg.model.get("dropout", 0.4),
