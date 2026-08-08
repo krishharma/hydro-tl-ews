@@ -1,0 +1,27 @@
+name: midwest_mini_finetune_conservative
+stage: finetune_conservative
+seed: 42
+
+data:
+  source: camels
+  camels_root: data
+  target_basin: "05507600"
+  warmup_period: ["2009-01-01", "2010-08-31"]
+  validation_period: ["2009-09-02", "2010-12-31"]
+  sequence_length: 90
+
+model:
+  pretrained_checkpoint: results/midwest_mini/checkpoints/pretrain.pt
+  hidden_size: 128
+  dropout: 0.4
+
+training:
+  batch_size: 64
+  epochs: 8
+  patience: 3
+  head_lr: 1.0e-3
+  weight_decay: 0.0
+
+output:
+  checkpoint_path: results/midwest_mini/checkpoints/finetune_conservative.pt
+  history_path: results/midwest_mini/history/finetune_conservative.json

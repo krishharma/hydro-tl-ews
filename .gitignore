@@ -26,3 +26,11 @@ results/
 
 # Local / cloud helper artifacts (not needed to reproduce)
 scripts/runpod/
+
+# LaTeX build junk
+*.aux
+*.bbl
+*.blg
+*.out
+*.toc
+docs/short_paper.log

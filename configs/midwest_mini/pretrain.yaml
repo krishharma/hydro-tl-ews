@@ -1,0 +1,42 @@
+# Laptop-optimized Midwest US pretrain (supervisor scope).
+# Target: Lick Creek, MO (05507600). Donors: similar basins inside Midwest bbox.
+# Sized for Apple Silicon (~20 donors, seq 90) so a full TL comparison finishes
+# in hours rather than days.
+name: midwest_mini_pretrain
+stage: pretrain
+seed: 42
+
+data:
+  source: camels
+  camels_root: data
+  target_basin: "05507600"
+  target_basins: ["05507600"]
+  exclusion_buffer_km: 50
+  # Midwest CONUS box (MN/WI/MI/IA/IL/IN/OH/MO + eastern KS/NE fringe)
+  donor_bbox: [36.5, 49.5, -104.0, -80.5]
+  similar_donor_count: 20
+  pretrain_period: ["1995-10-01", "2008-09-30"]
+  validation_period: ["2008-10-01", "2010-09-30"]
+  sequence_length: 90
+  num_workers: 0
+  static_feature_set: full
+
+model:
+  hidden_size: 128
+  dropout: 0.4
+  initial_forget_bias: 3.0
+
+training:
+  batch_size: 128
+  epochs: 10
+  patience: 4
+  learning_rate: 1.0e-3
+  weight_decay: 0.0
+  clip_grad_norm: 1.0
+
+evaluation:
+  metrics: [NSE, KGE, PBIAS]
+
+output:
+  checkpoint_path: results/midwest_mini/checkpoints/pretrain.pt
+  history_path: results/midwest_mini/history/pretrain.json

@@ -96,6 +96,23 @@ python scripts/make_sample_camels.py      # → data/sample_camels/ (~4 MB)
 python scripts/run_sample_pipeline.py     # → results/sample/
 ```
 
+### 1c. Midwest mini study (real CAMELS, laptop-optimized)
+
+Supervisor-scoped run on Midwest basins (target USGS `05507600`). Needs a
+partial CAMELS extract (HUC `04/05/07/10` Daymet + streamflow) under `data/` —
+see [`data/README.md`](data/README.md).
+
+```bash
+python scripts/run_midwest_mini.py
+# resume after pretrain:
+python scripts/run_midwest_mini.py --skip-pretrain
+```
+
+Configs: [`configs/midwest_mini/`](configs/midwest_mini/). Outputs:
+`results/midwest_mini/` (including walk-forward metrics + SHAP). Write-up:
+[`docs/OBSERVATIONS_MIDWEST.md`](docs/OBSERVATIONS_MIDWEST.md) and
+[`docs/short_paper.tex`](docs/short_paper.tex).
+
 ### 2. Single stage (config-driven)
 
 ```bash

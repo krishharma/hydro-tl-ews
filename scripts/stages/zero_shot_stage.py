@@ -66,9 +66,9 @@ def run_zero_shot(cfg: ExperimentConfig) -> None:
     preds, obs = trainer.predict(eval_loader)
 
     dates = pd.DatetimeIndex(eval_ds.dates)
-    keep = (dates >= eval_start) & (dates <= eval_end)
-    preds = np.asarray(preds)[keep.to_numpy()]
-    obs = np.asarray(obs)[keep.to_numpy()]
+    keep = np.asarray((dates >= eval_start) & (dates <= eval_end))
+    preds = np.asarray(preds)[keep]
+    obs = np.asarray(obs)[keep]
     dates = dates[keep]
 
     metrics = {

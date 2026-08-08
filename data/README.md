@@ -15,7 +15,10 @@ data/
 
 **Source:** [CAMELS-US (NCAR)](https://ral.ucar.edu/solutions/products/camels)
 
-**Size:** ~14 GB unpacked (full continental set used by pretrain).
+**Size:** ~14 GB unpacked (full continental set). A **Midwest laptop subset**
+is enough for `configs/midwest_mini/` — keep only Daymet + streamflow under
+HUC folders `04`, `05`, `07`, and `10` (~200 MB of time series) plus
+`camels_attributes_v2.0/` from [Zenodo 15529996](https://zenodo.org/records/15529996).
 
 If you have the NCAR zip locally, unpack under `data/` so the layout above matches.
 Do not commit large zips to git (`data/downloads/` is gitignored).

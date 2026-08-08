@@ -102,7 +102,9 @@ class Trainer:
     def run_epoch(self, loader: DataLoader, train: bool, basin_std: float = 1.0) -> float:
         self.model.train(mode=train)
         total, n = 0.0, 0
-        for batch in loader:
+        n_batches = len(loader)
+        log_every = max(1, n_batches // 5) if n_batches >= 10 else n_batches + 1
+        for i, batch in enumerate(loader, start=1):
             if len(batch) == 4:
                 X, S, y, std_t = batch
             else:
@@ -112,6 +114,8 @@ class Trainer:
                 loss = self._step(X, S, y, std_t, train=train)
             total += loss * len(y)
             n += len(y)
+            if train and (i == 1 or i % log_every == 0 or i == n_batches):
+                log.info("  batch %d/%d | running_loss=%.4f", i, n_batches, total / max(n, 1))
         return total / max(n, 1)
 
     # ---------------------------------------------------------------- fit

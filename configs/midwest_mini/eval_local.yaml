@@ -1,0 +1,21 @@
+name: midwest_mini_eval_local
+stage: zero_shot
+seed: 42
+
+data:
+  source: camels
+  camels_root: data
+  target_basin: "05507600"
+  full_period: ["2011-01-01", "2014-12-31"]
+  normalization_period: ["2009-01-01", "2010-12-31"]
+  sequence_length: 90
+
+model:
+  pretrained_checkpoint: results/midwest_mini/checkpoints/local_baseline.pt
+
+training:
+  batch_size: 128
+
+output:
+  metrics_path: results/midwest_mini/local_eval_metrics.json
+  predictions_path: results/midwest_mini/local_eval_predictions.csv

@@ -35,6 +35,37 @@ def _haversine_km(lat1, lon1, lat2, lon2):
     return 2 * r * math.asin(math.sqrt(a))
 
 
+def _lat_lon_cols(attrs):
+    lat_cols = [c for c in attrs.columns if c.lower() in {"gauge_lat", "lat", "latitude"}]
+    lon_cols = [c for c in attrs.columns if c.lower() in {"gauge_lon", "lon", "longitude"}]
+    if not (lat_cols and lon_cols):
+        return None, None
+    return lat_cols[0], lon_cols[0]
+
+
+def filter_donors_by_bbox(attrs, donors: list[str], bbox) -> list[str]:
+    """Keep donors whose gauge lat/lon fall inside ``bbox``.
+
+    ``bbox`` is ``[lat_min, lat_max, lon_min, lon_max]`` (lon negative in CONUS).
+    """
+    if not bbox:
+        return donors
+    lat_min, lat_max, lon_min, lon_max = [float(x) for x in bbox]
+    lat_col, lon_col = _lat_lon_cols(attrs)
+    if lat_col is None:
+        log.warning("donor_bbox requested but no lat/lon columns found in attributes.")
+        return donors
+    keep = []
+    for bid in donors:
+        if bid not in attrs.index:
+            continue
+        blat = float(attrs.loc[bid, lat_col])
+        blon = float(attrs.loc[bid, lon_col])
+        if lat_min <= blat <= lat_max and lon_min <= blon <= lon_max:
+            keep.append(bid)
+    return keep
+
+
 def exclude_targets_and_buffer(attrs, donors: list[str], targets: list[str],
                                exclusion_km: float | None) -> list[str]:
     """Drop every target basin from ``donors`` and, when coordinates are
@@ -47,12 +78,10 @@ def exclude_targets_and_buffer(attrs, donors: list[str], targets: list[str],
     donors = [b for b in donors if b not in set(targets)]
     if not exclusion_km:
         return donors
-    lat_cols = [c for c in attrs.columns if c.lower() in {"gauge_lat", "lat", "latitude"}]
-    lon_cols = [c for c in attrs.columns if c.lower() in {"gauge_lon", "lon", "longitude"}]
-    if not (lat_cols and lon_cols):
+    lat_col, lon_col = _lat_lon_cols(attrs)
+    if lat_col is None:
         log.warning("exclusion_buffer_km requested but no lat/lon columns found in attributes.")
         return donors
-    lat_col, lon_col = lat_cols[0], lon_cols[0]
     t_coords = [(float(attrs.loc[t, lat_col]), float(attrs.loc[t, lon_col]))
                 for t in targets if t in attrs.index]
     keep = []
@@ -75,18 +104,53 @@ def run_pretrain(cfg: ExperimentConfig) -> None:
     if target_basin and target_basin not in targets:
         targets.insert(0, target_basin)
 
+    # Optional geographic gate (e.g. Midwest CONUS bbox) before similarity trim.
+    region_pool = list(attrs.index)
+    region_pool = filter_donors_by_bbox(
+        attrs, region_pool, cfg.data.get("donor_bbox"))
+    if cfg.data.get("donor_bbox"):
+        log.info("Geographic donor pool after bbox filter: %d basins", len(region_pool))
+
     n_similar = cfg.data.get("similar_donor_count")
     if n_similar:
         # Similarity-selected donor mode stays anchored on the primary target.
+        # Restrict the attribute table to the geographic pool when provided.
+        attr_for_sim = attrs.loc[region_pool, STATIC_ATTRIBUTES]
+        if target_basin not in attr_for_sim.index:
+            # Target may sit just outside a tight bbox; still allow similarity
+            # against the regional pool by temporarily adding its row.
+            attr_for_sim = pd.concat(
+                [attr_for_sim, attrs.loc[[target_basin], STATIC_ATTRIBUTES]])
         donors = select_donor_basins(
-            attrs.loc[:, STATIC_ATTRIBUTES],
+            attr_for_sim,
             target_basin=target_basin,
             n_donors=int(n_similar),
         )
+        donors = [b for b in donors if b in set(region_pool)]
     else:
-        donors = list(attrs.index)
+        donors = list(region_pool)
     donors = exclude_targets_and_buffer(
         attrs, donors, targets, cfg.data.get("exclusion_buffer_km"))
+
+    # Only keep basins that actually have forcing+streamflow on disk (partial
+    # CAMELS extracts for laptop runs may omit many HUC folders).
+    available = []
+    for bid in donors:
+        try:
+            ds._find_forcing_file(bid)
+            ds._find_streamflow_file(bid)
+            available.append(bid)
+        except FileNotFoundError:
+            continue
+    if len(available) < len(donors):
+        log.info("Dropped %d donors missing local time-series files (%d remain)",
+                 len(donors) - len(available), len(available))
+    donors = available
+    if not donors:
+        raise RuntimeError(
+            "No donor basins available after geographic / similarity / file filters. "
+            "Check CAMELS extract and donor_bbox / similar_donor_count settings."
+        )
 
     log.info("Pre-training on %d basins (targets excluded: %s)",
              len(donors), ", ".join(targets))
