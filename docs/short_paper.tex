@@ -21,8 +21,8 @@
 \newcommand{\repo}{\href{https://github.com/krishharma/hydro-tl-ews}{github.com/krishharma/hydro-tl-ews}}
 
 \title{%
-  \textbf{\textcolor{accentdark}{Transfer Learning for Hydrological Early Warning}}\\[0.25em]
-  \large Predicting streamflow when local data are scarce
+  \textbf{\textcolor{accentdark}{How few donor basins are enough?}}\\[0.25em]
+  \large Regional transfer learning for daily streamflow with two years of local data
 }
 
 \author{Krish Sharma\\[0.15em]
@@ -38,389 +38,204 @@
 
 \section{Introduction}
 
-For most rivers, there are no long records of how much water flows through
-them. When only one or two years of data are available for a gauge, machine
-learning will memorize the data for that river instead of learning about the
-relationship between the river's flow and different weather patterns. Transfer
-learning can be used to solve this problem:
-\begin{enumerate}
-  \item Train a model on \textbf{donor basins} with long records outside the
-        watershed of the river to be measured.
-  \item Apply that model to the \textbf{target basin}, even if it has a short
-        record of its flow.
-  \item \textbf{Fine-tune} the model with a few years of data from the target
-        river.
-\end{enumerate}
+Most gauges do not come with decades of discharge. The usual large-sample LSTM
+recipe---hundreds of basins, long sequences, a GPU---answers a different
+question from the one a field office actually faces: can a regional model help
+when the local record is about two years long and the hardware is ordinary?
+That constraint is the study design here.
 
-The model forecasts daily streamflow and the likelihood of flow crossing
-drought or flood thresholds over the coming 1, 3, or 7 days. The code is open
-source at \repo, with setup in
-\href{https://github.com/krishharma/hydro-tl-ews/blob/main/data/README.md}{data/README.md},
-settings in
-\href{https://github.com/krishharma/hydro-tl-ews/tree/main/configs}{configs/},
-and run instructions in
-\href{https://github.com/krishharma/hydro-tl-ews/blob/main/docs/RUNNING.md}{docs/RUNNING.md}.
+The experiment holds the target, the warmup, and the evaluation window fixed,
+and varies only how the regional prior is built. An entity-aware LSTM
+(EA-LSTM) is pretrained on similar Midwest donors, then transferred to Lick
+Creek near Perry, Missouri (USGS~05507600) with a frozen-LSTM, head-only
+fine-tune and a walk-forward refit protocol. Training from scratch on the same
+warmup is the local baseline. Next-day persistence and a day-of-year
+climatology---fit only on that warmup---put a floor under the NSE numbers. A
+later sensitivity run cuts the donor pool to eight similar basins.
 
-Although a full continental CAMELS-US run was put off because of compute
-limits, a Midwest laptop study was completed for Lick Creek near Perry, MO
-(USGS~05507600) with 17 similar Midwest donor basins. Results and a check
-against the project objectives are in Section~\ref{sec:results}. A later
-sensitivity pass tried a smaller donor pool, mean daily temperature, and
-multi-seed averaging (Section~\ref{sec:opt}); it did not beat the 17-donor
-benchmark. The original Merced / multi-regime plan is still in the repository
-configs; basins for that larger study are listed in Table~\ref{tab:basins}.
+The numbers in \texttt{results/midwest\_mini/} are from this completed Lick
+Creek study (1{,}461 evaluation days), not from a smoke test or synthetic
+sample. Code is at \repo.
 
-\section{Data}
+\section{Data and methods}
 
-\subsection{CAMELS-US}
+\subsection{Basin, donors, and periods}
 
-All real experiments use \textbf{CAMELS-US}, a dataset that includes
-${\sim}$671 gauges located throughout the contiguous United States. At each
-gauge, there are daily measurements of precipitation, temperature (from
-Daymet), streamflow (from USGS), and various attributes of the watershed
-itself. The majority of the gauges are used as \textbf{donors} (training
-data), while \textbf{targets} are held out for testing
-(Figure~\ref{fig:camels}). The CAMELS dataset is not bundled with this
-repository, but instructions for downloading it are in
-\href{https://github.com/krishharma/hydro-tl-ews/blob/main/data/README.md}{data/README.md}.
+CAMELS-US supplies Daymet weather, USGS streamflow, and 27 static catchment
+attributes. The target is a plains basin (snow fraction ${\approx}\,0.07$).
+Donors are the most similar Midwest gauges in static attribute space inside
+$[36.5^\circ\mathrm{N},\,49.5^\circ\mathrm{N}]\times[-104^\circ\mathrm{W},\,-80.5^\circ\mathrm{W}]$,
+after a 50\,km exclusion buffer and after dropping gauges missing from the
+local HUC 04/05/07/10 extract. That procedure yields \textbf{17 donors}
+(Figure~\ref{fig:donors}). Weather inputs are precipitation, $T_\mathrm{max}$,
+$T_\mathrm{min}$, shortwave radiation, vapor pressure, and day length.
 
 \begin{figure}[ht]
   \centering
-  \includegraphics[width=0.88\linewidth]{fig_camels_map.png}
-  \caption{CAMELS-US gauge locations. Target basins (Table~\ref{tab:basins})
-    are excluded from donor training.}
-  \label{fig:camels}
+  \includegraphics[width=0.88\linewidth]{fig_donor_target_map.png}
+  \caption{Seventeen similar Midwest donor gauges and the Lick Creek target.
+    Grey points are other CAMELS gauges in the same box; they are context, not
+    training data.}
+  \label{fig:donors}
 \end{figure}
 
-\subsection{Model inputs and output}
-
-\textbf{Daily weather} (six variables): precipitation, maximum and minimum
-temperature, shortwave radiation, vapor pressure, and day length.
-
-\textbf{Watershed properties} (27 static attributes): topography, climate, land
-cover, soils, and geology. These attributes describe the watershed that is being
-simulated by the model. The same weather patterns can lead to different
-streamflow in different watersheds due to these different watershed properties.
-
-\textbf{Prediction target:} daily streamflow in mm/day, derived from USGS
-streamflow measurements in cfs by dividing by watershed area.
-Table~\ref{tab:inputs} summarizes all inputs.
-
 \begin{table}[ht]
   \centering
-  \caption{Summary of model inputs.}
-  \label{tab:inputs}
-  \small
-  \renewcommand{\arraystretch}{1.1}
-  \begin{tabular}{@{}lp{8.5cm}@{}}
-    \toprule
-    \textbf{Type} & \textbf{Variables} \\
-    \midrule
-    Daily weather & Precipitation, $T_\mathrm{max}$, $T_\mathrm{min}$, shortwave radiation, vapor pressure, day length \\
-    Watershed     & 27 static attributes: elevation, slope, area, climate indices, land cover, soils, geology \\
-    Target        & Daily streamflow (mm/day) \\
-    \bottomrule
-  \end{tabular}
-\end{table}
-
-\subsection{Time periods and extremes}
-
-The available local data are limited to the warmup period alone (about two
-years of target discharge), and the model is then tested outside that period on
-2011--2014 (Table~\ref{tab:periods};
-\href{https://github.com/krishharma/hydro-tl-ews/blob/main/configs/walk_forward.yaml}{walk\_forward.yaml}).
-Flood and drought levels are based on percentiles calculated over the long record
-from 1990--2010: \textbf{Q5} (drought), \textbf{Q95} (flood), and \textbf{Q99}
-(severe flood).
-
-\begin{table}[ht]
-  \centering
-  \caption{Time periods used in the completed Midwest run (gauge 05507600).}
+  \caption{Time periods used for USGS 05507600.}
   \label{tab:periods}
   \small
-  \renewcommand{\arraystretch}{1.1}
-  \begin{tabular}{@{}llp{4.5cm}@{}}
+  \begin{tabular}{@{}llp{5.2cm}@{}}
     \toprule
-    \textbf{Period} & \textbf{Dates} & \textbf{Purpose} \\
+    \textbf{Period} & \textbf{Dates} & \textbf{Role} \\
     \midrule
-    Donor pretrain    & Oct.\ 1995--Sep.\ 2008 & Train regional model on Midwest donors \\
-    Pretrain validation & Oct.\ 2008--Sep.\ 2010 & Early stopping / model selection \\
-    Target warmup     & Jan.\ 2009--Dec.\ 2010 & Simulate scarce local data ($\sim$2\,yr) \\
+    Donor pretrain & Oct.\ 1995--Sep.\ 2008 & Train the regional EA-LSTM \\
+    Pretrain validation & Oct.\ 2008--Sep.\ 2010 & Early stopping \\
+    Target warmup & Jan.\ 2009--Dec.\ 2010 & Scarce local record (${\sim}$2\,yr) \\
     Target evaluation & 2011--2014 & Fixed-window and walk-forward tests \\
-    Threshold history & 1990--2010 & Define Q5, Q95, Q99 \\
+    Threshold history & 1990--2010 & At-site Q5, Q95, Q99 \\
     \bottomrule
   \end{tabular}
 \end{table}
 
-\begin{table}[ht]
-  \centering
-  \caption{Seven target basins and climate types.}
-  \label{tab:basins}
-  \small
-  \renewcommand{\arraystretch}{1.1}
-  \begin{tabular}{@{}cll@{}}
-    \toprule
-    \textbf{Gauge} & \textbf{River} & \textbf{Climate} \\
-    \midrule
-    11264500 & Merced R., CA       & Sierra snowmelt (primary) \\
-    14222500 & EF Lewis R., WA     & Pacific Northwest rain \\
-    01544500 & Kettle Ck., PA      & Mixed snow/rain \\
-    09107000 & Taylor R., CO       & Rockies snowmelt \\
-    02128000 & Little R., NC       & Humid Southeast \\
-    05507600 & Lick Ck., MO        & Continental plains \\
-    11224500 & Los Gatos Ck., CA   & Semi-arid \\
-    \bottomrule
-  \end{tabular}
-\end{table}
+\subsection{Model and transfer}
 
-\section{Methodology}
+The model is an EA-LSTM: static catchment attributes control the input gate;
+weather and memory drive the remaining gates. Hidden size is 128, lookback
+\textbf{90} days, dropout 0.4, forget-gate bias $+3.0$. Pretraining runs 10
+epochs on the 17 donors. Adaptations compared: zero-shot; Approach~A (output
+head only; LSTM frozen); local-from-scratch on the warmup; walk-forward with a
+head-only refit every 90 days from 2009-01-01 and online bias correction.
+Approach~B was not run here. The scored window is 2011--2014 ($n=1461$ days).
 
-The workflow consists of four main stages: training the model on a collection of
-regional basins, adapting the model to the particular basin of interest,
-evaluating the model on that basin using walk-forward analysis, and
-early-warning scoring.
+\subsection{Naive baselines and warnings}
 
-\subsection{Regional model (EA-LSTM)}
+Persistence sets $\hat Q(t)=Q(t-1)$. Day-of-year climatology is the mean
+observed discharge on that calendar day during warmup 2009--2010 only.
+Warnings are a post-process on the walk-forward hydrograph. Labels at date $t$
+with lead $L$ are 1 if any day in $[t+1,t+L]$ crosses the threshold. Flood
+thresholds are Q95~$=3.26$\,mm\,d$^{-1}$ and Q99~$=16.91$\,mm\,d$^{-1}$.
+\textbf{Q5 resolves to $0.0$\,mm\,d$^{-1}$}, so those events are low/zero-flow
+days, not a seasonal drought. Original probabilities use a Gaussian residual
+and an independence product over the lead window. A second estimator takes the
+maximum of the 1-day probabilities in the same window. Metrics: NSE, KGE,
+PBIAS, AUC, Brier, BSS against the event base rate, F1 at 0.5 and at the
+threshold in $\{0.05,\ldots,0.95\}$ that maximises F1 on the scored window
+(diagnostic only).
 
-The model that is used in this project is an \textbf{Entity-Aware LSTM}
-(EA-LSTM). For the EA-LSTM, the properties of the watershed control the
-\textbf{input gate}, while the weather and memory drive the remaining gates of
-the LSTM. Thus, each EA-LSTM can be trained to represent multiple basins. Each
-day, the EA-LSTM is provided with the weather of the previous lookback window
-(365 days in the full configs; \textbf{90 days} in the Midwest laptop run), and
-it can use this information to forecast the streamflow that will occur that day.
-During pre-training, the EA-LSTM is exposed to streamflow data from multiple
-different basins and minimizes its error in predicting discharge from each of
-those basins.
-
-\subsection{Transfer to the target basin}
-
-After pre-training, four adaptation strategies are compared:
-\begin{itemize}
-  \item \textbf{Zero-shot} --- no local training; tests the model's knowledge
-        of the regional corpus alone.
-  \item \textbf{Approach A} --- trains only the output head of the EA-LSTM while
-        leaving the LSTM portion intact (safest with limited local data).
-  \item \textbf{Approach B} --- trains the output head and the upper LSTM layers
-        at a reduced learning rate (more adaptation, higher overfitting risk).
-  \item \textbf{Local baseline} --- trains a new EA-LSTM from scratch on the
-        warmup data only.
-\end{itemize}
-
-\subsection{Walk-forward evaluation}
-
-Random splits of the streamflow time series into train and test data can lead to
-data leakage of temporal structure because the flow on one day is similar to the
-flow on the previous day. Shuffled splits can therefore make models appear to
-perform better than they do in reality. This project uses \textbf{walk-forward
-evaluation} to approximate deployment with limited startup data:
-\begin{enumerate}
-  \item Start with warmup data only.
-  \item Forecast the next block of days and score against observations.
-  \item Every 90 days, retrain on all discharge from the warmup start forward.
-  \item Apply online bias correction.
-  \item Advance through 2011--2014 without using future observations before
-        forecasting them.
-\end{enumerate}
-
-This evaluation method is more rigorous than a single random split of the data
-into train and test sets and provides a more honest estimate of performance when
-only a short local record exists at startup.
-
-\subsection{Early warnings and metrics}
-
-A post-processing layer translates streamflow forecasts to Q5, Q95, and Q99
-crossing probabilities at 1-, 3-, and 7-day leads. Warning skill scores are
-based on AUC, F1@0.5, and the Brier score. These warnings are based on
-hindcasted flow forecasts, not a separate multi-day weather forecast. Streamflow
-forecast skill is scored using NSE, KGE, and PBIAS.
-
-\section{Software and status}
-
-Each stage is controlled by a YAML file in
-\href{https://github.com/krishharma/hydro-tl-ews/tree/main/configs}{configs/}.
-Table~\ref{tab:io} lists the input to each stage and the output of each stage
-after running the full experiments.
-
-\begin{table}[ht]
-  \centering
-  \caption{Software inputs and expected outputs.}
-  \label{tab:io}
-  \small
-  \renewcommand{\arraystretch}{1.1}
-  \begin{tabular}{@{}lp{7cm}@{}}
-    \toprule
-    \textbf{Item} & \textbf{Description} \\
-    \midrule
-    Python 3.10+ & Dependencies in \href{https://github.com/krishharma/hydro-tl-ews/blob/main/requirements.txt}{requirements.txt} \\
-    CAMELS-US      & Placed under \texttt{data/} for real experiments \\
-    YAML config    & Paths, date ranges, model settings per stage \\
-    Checkpoint     & Pre-trained weights for fine-tune and evaluation \\
-    \midrule
-    \texttt{results/midwest\_mini/} & Checkpoints, metrics, predictions for completed run \\
-    \texttt{walk\_forward.csv} & Daily observed and predicted flow \\
-    \texttt{walk\_forward\_metrics.json} & NSE, KGE, PBIAS, warning scores \\
-    \texttt{walk\_forward\_warnings.csv} & Event labels and probabilities \\
-    \texttt{summary.json} & Aggregated Midwest study metrics \\
-    \bottomrule
-  \end{tabular}
-\end{table}
-
-Midwest laptop study (what was actually run):
-\href{https://github.com/krishharma/hydro-tl-ews/blob/main/scripts/run_midwest_mini.py}{run\_midwest\_mini.py}
-with configs under
-\href{https://github.com/krishharma/hydro-tl-ews/tree/main/configs/midwest_mini}{configs/midwest\_mini/}.
-The donor-pruning / mean-temperature / multi-seed follow-up is
-\href{https://github.com/krishharma/hydro-tl-ews/blob/main/scripts/run_midwest_opt.py}{run\_midwest\_opt.py}
-with
-\href{https://github.com/krishharma/hydro-tl-ews/tree/main/configs/midwest_opt}{configs/midwest\_opt/}.
-Larger optional workflows are still in
-\href{https://github.com/krishharma/hydro-tl-ews/blob/main/scripts/run_full_pipeline.sh}{run\_full\_pipeline.sh}
-and
-\href{https://github.com/krishharma/hydro-tl-ews/blob/main/scripts/run_multi_target.py}{run\_multi\_target.py}.
-More caveats are in
-\href{https://github.com/krishharma/hydro-tl-ews/blob/main/docs/KNOWN_LIMITATIONS.md}{KNOWN\_LIMITATIONS.md}.
-
-\section{Results and observations}
-\label{sec:results}
-
-\subsection{What was actually run}
-
-A full CAMELS-US pretrain on all ${\sim}$671 basins, with transfer to a
-snowmelt-dominated Sierra/Rockies target, remains designed in the repository
-but was not completed here because of compute and disk limits on a laptop.
-The completed experiment used a Midwest CAMELS subset instead:
-
-\begin{itemize}
-  \item \textbf{Hardware:} Apple M4 laptop, Apple Silicon MPS, ${\sim}$16\,GB RAM.
-  \item \textbf{Data extract:} CAMELS attributes for all gauges, but only Daymet
-        forcings and USGS streamflow for HUC folders \texttt{04}, \texttt{05},
-        \texttt{07}, and \texttt{10} (${\sim}$200\,MB of time series, not the full
-        ${\sim}$14\,GB continental unpack).
-  \item \textbf{Geographic pool:} 163 CAMELS basins inside the Midwest box
-        $[36.5^\circ\mathrm{N},\,49.5^\circ\mathrm{N}]\times
-        [-104^\circ\mathrm{W},\,-80.5^\circ\mathrm{W}]$.
-  \item \textbf{Donors:} the 17 basins most similar to the target in static
-        attributes, after a 50\,km exclusion buffer and dropping gauges that
-        were missing local files.
-  \item \textbf{Target:} USGS \textbf{05507600} (Lick Creek near Perry, MO;
-        continental plains; $\mathrm{frac\_snow}\approx 0.07$).
-  \item \textbf{Model:} EA-LSTM, hidden size \textbf{128}, lookback
-        \textbf{90} days, dropout 0.4, forget-gate bias $+3.0$.
-  \item \textbf{Pretrain:} 10 epochs, batch size 128, NSE loss; validation
-        NSE-loss fell from 0.94 (epoch~1) to 0.78 (epoch~10).
-  \item \textbf{Adaptation compared:} zero-shot; Approach~A (head-only fine-tune
-        on the 2-year warmup); local-from-scratch baseline. Approach~B was not
-        run here.
-  \item \textbf{Walk-forward:} 2011--2014, refit every 90 days
-        (\textbf{17 refits}), \texttt{refit\_train\_start=2009-01-01} so refits
-        stay honest to scarce local data, online bias correction, 1\,461 scored
-        days.
-  \item \textbf{SHAP:} GradientExplainer after walk-forward (200 background /
-        100 sample sequences); importance written to
-        \texttt{results/midwest\_mini/shap\_global\_importance.csv}.
-  \item \textbf{Command:}
-        \texttt{python scripts/run\_midwest\_mini.py}
-        (configs in \texttt{configs/midwest\_mini/}).
-  \item \textbf{Artifacts:} \texttt{results/midwest\_mini/summary.json} plus the
-        metric, prediction, warning, and SHAP files beside it.
-\end{itemize}
+\section{Results}
 
 \subsection{Continuous streamflow skill}
 
-Table~\ref{tab:midwest_metrics} shows NSE, KGE, and PBIAS on the shared
-2011--2014 window ($n=1461$ days). Transfer from similar Midwest stations beats
-training from scratch on the two-year warmup alone. Fine-tuning also raises KGE
-and nearly clears the large negative volume bias seen in zero-shot. Walk-forward
-is the strongest continuous result here, which fits a model that is refit as
-local observations arrive.
+Table~\ref{tab:midwest_metrics} places transfer above both naive baselines and
+the local LSTM. Walk-forward NSE (0.179) is the best continuous score.
+Persistence has a high KGE (0.42) because yesterday is correlated with today,
+but its NSE is negative ($-0.166$): peak errors on this flashy plains
+hydrograph more than eat the variance. Climatology from two years of warmup is
+worse (NSE $=-2.34$). Local-from-scratch barely beats a mean forecast
+(NSE~$=0.009$). Fine-tuning almost removes volume bias (PBIAS $+4.1\%$).
+Absolute NSE is modest next to continental LSTMs; the ranking that answers the
+study question is not: \textbf{transfer $\gg$ local}, and transfer beats
+persistence on NSE.
 
 \begin{table}[ht]
   \centering
-  \caption{Midwest mini-study continuous skill (USGS 05507600, 2011--2014).}
+  \caption{Continuous skill at USGS 05507600, 2011--2014 ($n=1461$ days).}
   \label{tab:midwest_metrics}
   \small
-  \renewcommand{\arraystretch}{1.1}
   \begin{tabular}{@{}lrrr@{}}
     \toprule
     \textbf{Setting} & \textbf{NSE} & \textbf{KGE} & \textbf{PBIAS (\%)} \\
     \midrule
+    Next-day persistence & $-0.166$ & 0.421 & $+1.6$ \\
+    Day-of-year climatology (warmup) & $-2.337$ & $-1.486$ & $+223.1$ \\
+    Local baseline (from-scratch warmup) & 0.009 & $-0.351$ & $+72.6$ \\
     Zero-shot (pretrained only) & 0.150 & 0.032 & $-37.5$ \\
     Fine-tune, head only (Approach A) & 0.160 & 0.112 & $+4.1$ \\
-    Local baseline (from-scratch warmup) & 0.009 & $-0.351$ & $+72.6$ \\
     Walk-forward (17$\times$ 90-day refits) & 0.179 & 0.161 & $-8.7$ \\
     \bottomrule
   \end{tabular}
 \end{table}
 
-Absolute NSE values (${\sim}$0.15--0.18) sit below published large-sample LSTM
-numbers from models trained on hundreds of donors with longer sequences. That
-gap is expected for a 17-donor, 90-day laptop setup on a flashier plains
-hydrograph. What still matters for this project is the ranking:
-\textbf{transfer $\gg$ local}.
+\begin{figure}[ht]
+  \centering
+  \includegraphics[width=0.92\linewidth]{fig_skill_bars.png}
+  \caption{NSE and KGE across settings. Dotted line: persistence NSE.
+    Day-of-year climatology (NSE $=-2.34$) is annotated, not forced onto the
+    same axis.}
+  \label{fig:bars}
+\end{figure}
 
-\subsection{Early-warning skill}
+\begin{figure}[ht]
+  \centering
+  \includegraphics[width=0.95\linewidth]{fig_hydrograph_2011_2014.png}
+  \caption{Observed discharge versus walk-forward transfer and
+    local-from-scratch. Transfer follows event timing; the local model does
+    not. Predictions clipped at zero for display.}
+  \label{fig:hydro}
+\end{figure}
 
-Thresholds from the long local record were Q5~$=0.0$\,mm/d (near-zero /
-intermittent low flow at this gauge), Q95~$=3.26$\,mm/d, and Q99~$=16.91$\,mm/d.
-Table~\ref{tab:midwest_ews} summarizes walk-forward warning scores. Flood and
-drought discrimination (AUC) is strong to good, especially at short leads. F1 at
-probability 0.5 stays modest, and Brier scores get worse at 3- and 7-day leads.
-That pattern fits warnings built from a hindcasted daily flow model rather than
-a separate multi-day weather forecast. Q99 F1 is undefined because too few
-events cross the 0.5 probability cutoff---a rarity issue, not a broken pipeline.
+\subsection{Early-warning scores and calibration}
+
+Flood Q95 discrimination is strong at every lead (AUC 0.908--0.922). Raw Brier
+scores still look as if skill collapses from 0.094 (1-day) to 0.693 (7-day).
+BSS against the base rate is negative for the independence product:
+mean 1-day probability is 0.29 while the event rate is 0.034, and the 7-day
+product has mean probability 0.89. Ranking is intact; calibration is not.
+Replacing the product with a window-max of 1-day probabilities cuts 3-day
+Brier from 0.374 to 0.105 and 7-day Brier from 0.693 to 0.121. F1 at 0.5 is
+the wrong operating point; a threshold sweep raises 1-day F1 from 0.286 to
+0.452 at probability 0.45 (Table~\ref{tab:midwest_ews};
+Figure~\ref{fig:reliab}).
 
 \begin{table}[ht]
   \centering
-  \caption{Walk-forward early-warning scores (USGS 05507600).}
+  \caption{Walk-forward warning scores. Prod.\ = independence product;
+    max = window-max of 1-day probabilities. F1* is the best F1 on a
+    0.05--0.95 sweep (diagnostic). Q5 $=0$\,mm\,d$^{-1}$ (low/zero flow).}
   \label{tab:midwest_ews}
   \small
-  \renewcommand{\arraystretch}{1.1}
-  \begin{tabular}{@{}llrrr@{}}
+  \renewcommand{\arraystretch}{1.05}
+  \begin{tabular}{@{}llrrrrrrr@{}}
     \toprule
-    \textbf{Event} & \textbf{Lead} & \textbf{AUC} & \textbf{F1@0.5} & \textbf{Brier} \\
+    \textbf{Event} & \textbf{Lead} & \textbf{AUC} & \textbf{Brier$_{\mathrm{p}}$} & \textbf{BSS$_{\mathrm{p}}$} & \textbf{Brier$_{\mathrm{m}}$} & \textbf{BSS$_{\mathrm{m}}$} & \textbf{F1@0.5} & \textbf{F1*} \\
     \midrule
-    Flood Q95  & 1\,d & 0.922 & 0.286 & 0.094 \\
-    Flood Q95  & 3\,d & 0.914 & 0.133 & 0.374 \\
-    Flood Q95  & 7\,d & 0.908 & 0.219 & 0.693 \\
-    Flood Q99  & 1\,d & 0.950 & ---   & 0.005 \\
-    Flood Q99  & 3\,d & 0.931 & ---   & 0.014 \\
-    Flood Q99  & 7\,d & 0.916 & ---   & 0.033 \\
-    Drought Q5 & 1\,d & 0.805 & 0.410 & 0.214 \\
-    Drought Q5 & 3\,d & 0.811 & 0.264 & 0.589 \\
-    Drought Q5 & 7\,d & 0.819 & 0.276 & 0.803 \\
+    Flood Q95 & 1\,d & 0.922 & 0.094 & $-1.90$ & 0.094 & $-1.90$ & 0.286 & 0.452 \\
+    Flood Q95 & 3\,d & 0.914 & 0.374 & $-4.87$ & 0.105 & $-0.65$ & 0.133 & 0.500 \\
+    Flood Q95 & 7\,d & 0.908 & 0.693 & $-5.45$ & 0.121 & $-0.13$ & 0.219 & 0.621 \\
+    Flood Q99 & 1\,d & 0.950 & 0.005 & --- & 0.005 & --- & --- & --- \\
+    Low/zero flow (Q5) & 1\,d & 0.805 & 0.214 & $-0.74$ & 0.214 & $-0.74$ & 0.410 & 0.419 \\
     \bottomrule
   \end{tabular}
 \end{table}
 
-\subsection{SHAP interpretation}
+\begin{figure}[ht]
+  \centering
+  \includegraphics[width=0.98\linewidth]{fig_reliability_q95.png}
+  \caption{Reliability of flood Q95 warnings. Coral: independence product.
+    Teal: window-max of 1-day probabilities.}
+  \label{fig:reliab}
+\end{figure}
 
-SHAP was also run after walk-forward on the fine-tuned Midwest model.
-GradientExplainer used 200 background sequences and 100 samples from the target
-basin history. The highest mean absolute SHAP values were all weather variables.
-Precipitation ranked first, then vapor pressure, shortwave radiation, day
-length, minimum temperature, and maximum temperature
-(Table~\ref{tab:midwest_shap}). Static watershed attributes had mean absolute
-SHAP of zero in this single-basin setup. That does not mean the model ignores
-catchment properties; those inputs are fixed for one gauge, so within-basin
-attributions naturally point at the weather that changes day to day. For this
-rainfall-runoff plains basin, precip leading the ranking is hydrologically
-sensible.
+\subsection{SHAP drivers}
+
+GradientExplainer ranks precipitation first, then vapor pressure, shortwave
+radiation, day length, $T_\mathrm{min}$, and $T_\mathrm{max}$
+(Table~\ref{tab:midwest_shap}). Static attributes have mean $|$SHAP$|=0$ in
+this single-basin explanation because they do not vary within one gauge.
 
 \begin{table}[ht]
   \centering
-  \caption{Top SHAP drivers (mean $|$SHAP$|$) for USGS 05507600.}
+  \caption{Top SHAP drivers for USGS 05507600.}
   \label{tab:midwest_shap}
   \small
-  \renewcommand{\arraystretch}{1.1}
   \begin{tabular}{@{}lr@{}}
     \toprule
     \textbf{Feature} & \textbf{Mean $|$SHAP$|$} \\
     \midrule
-    Precipitation (mm/day)     & 0.0097 \\
-    Vapor pressure (Pa)        & 0.0055 \\
+    Precipitation (mm/day) & 0.0097 \\
+    Vapor pressure (Pa) & 0.0055 \\
     Shortwave radiation (W/m$^2$) & 0.0052 \\
-    Day length (s)             & 0.0041 \\
+    Day length (s) & 0.0041 \\
     $T_\mathrm{min}$ ($^\circ$C) & 0.0036 \\
     $T_\mathrm{max}$ ($^\circ$C) & 0.0035 \\
     Static catchment attributes (all) & 0.0000 \\
@@ -428,96 +243,66 @@ sensible.
   \end{tabular}
 \end{table}
 
-\subsection{Objective-by-objective assessment}
+\subsection{How few donors? A negative result}
 
-Against the original research objectives, under the Midwest laptop scope:
-
-\begin{enumerate}
-  \item \textbf{Regional pre-training pipeline --- met (optimized).}
-        An EA-LSTM was pretrained on real CAMELS Midwest donors. The full
-        671-basin continental pretrain was skipped on purpose for compute.
-  \item \textbf{Fine-tuning for a data-scarce target --- met.}
-        Approach~A (LSTM frozen; head trained on ${\sim}$2 years of local $Q$)
-        finished on 05507600, a plains target under the same scarce-data
-        protocol used throughout this study.
-  \item \textbf{Quantify the value of transfer learning --- met.}
-        Fine-tuned transfer beat local-from-scratch by a wide margin
-        (NSE 0.160 vs.\ 0.009; KGE 0.112 vs.\ $-0.351$) and improved bias versus
-        zero-shot (PBIAS $+4\%$ vs.\ $-37\%$).
-  \item \textbf{Walk-forward validation --- met.}
-        Rolling-origin testing with honest \texttt{refit\_train\_start},
-        17 refits, and online bias correction gave the best continuous scores
-        in this study (NSE 0.179, KGE 0.161).
-  \item \textbf{Probabilistic early warning --- partially met.}
-        AUC, F1, and Brier were produced at leads 1/3/7 for Q5, Q95, and Q99.
-        Discrimination is strong; decision metrics (F1, longer-lead Brier) are
-        weaker and should be read carefully.
-  \item \textbf{Explainable AI (SHAP) --- met.}
-        GradientExplainer attributions were computed on the fine-tuned model.
-        Weather drivers dominate; precip is the top feature, which fits a
-        plains rainfall-runoff basin.
-\end{enumerate}
-
-\subsection{Verdict}
-
-\textbf{Yes --- under the Midwest laptop scope, all six research objectives
-are addressed.} The run shows regional EA-LSTM pretraining on a laptop-sized
-real CAMELS extract; with only about two years of local data, transfer learning
-beats training from scratch; walk-forward gives an honest ops-style skill
-estimate; flood/drought warning scores can be made from the same forecasts; and
-SHAP points at weather drivers led by precipitation.
-
-This paper does \emph{not} claim continental CAMELS performance, snowmelt-regime
-transfer, or a seven-basin multi-regime study. Those stay as future work if more
-compute and disk become available. A longer narrative is in
-\href{https://github.com/krishharma/hydro-tl-ews/blob/main/docs/OBSERVATIONS_MIDWEST.md}{docs/OBSERVATIONS\_MIDWEST.md}.
-
-\subsection{Sensitivity to model and donor choices}
-\label{sec:opt}
-
-A second Lick Creek pilot tested four common efficiency tweaks on the same
-target (USGS~05507600). The donor pool was cut from 17 similar Midwest basins
-to about eight nearest neighbors (Pool et~al., 2021, \emph{Water Resour.\ Res.}).
-Asking for the seven nearest left only five basins after gauges missing from
-the partial CAMELS extract were dropped, so later runs asked for the ten
-nearest and kept eight with local files. The LSTM forget-gate bias was already
-$+3.0$ in the baseline. Daily minimum and maximum temperature were replaced
-with a single daily mean temperature. The same setup was trained with three
-random seeds (42, 123, and 456), and daily streamflow predictions were averaged
-before scoring.
-
-None of these changes beat the original 17-donor Midwest pilot on continuous
-skill (Table~\ref{tab:opt_metrics}). For 2011--2014, walk-forward NSE was 0.179
-for the baseline, 0.138 when donors were pruned but Tmin/Tmax were kept, and
-0.165 for the combined mean-temperature plus three-seed ensemble with eight
-donors. Fine-tune NSE followed the same pattern: 0.160, 0.113, and 0.133. In
-every setting, transfer learning still beat training from scratch under the
-two-year scarce-data protocol.
+Table~\ref{tab:opt_metrics} keeps the donor-pruning comparison. Cutting 17
+similar donors to 8, with Tmin/Tmax unchanged, lowers walk-forward NSE from
+0.179 to 0.138. Combining pruning with mean daily temperature and a three-seed
+average recovers some of that loss (NSE 0.165) but still does not beat the
+17-donor run. \textbf{The third row of Table~\ref{tab:opt_metrics} changes
+three variables at once} (donor count, temperature features, and multi-seed
+averaging) and should not be read as a single-factor effect. Forget-gate bias
+$+3.0$ is already the default in every row. Transfer still beats
+local-from-scratch after pruning.
 
 \begin{table}[ht]
   \centering
-  \caption{Sensitivity to donor pruning, mean temperature, and multi-seed averaging
-           (USGS 05507600, 2011--2014 NSE).}
+  \caption{Sensitivity to donor pruning (USGS 05507600, 2011--2014 NSE).
+    The third row changes donor count, temperature inputs, and seed averaging
+    together.}
   \label{tab:opt_metrics}
   \small
-  \renewcommand{\arraystretch}{1.1}
   \begin{tabular}{@{}lrrrr@{}}
     \toprule
     \textbf{Setting} & \textbf{Donors} & \textbf{FT} & \textbf{Local} & \textbf{WF} \\
     \midrule
-    Baseline (Tmin+Tmax, seed 42) & 17 & 0.160 & 0.009 & 0.179 \\
-    Prune only (Tmin+Tmax, seed 42) & 8 & 0.113 & 0.009 & 0.138 \\
-    Prune + mean $T$ + 3-seed avg. & 8 & 0.133 & $-0.097$ & 0.165 \\
+    Tmin+Tmax, seed 42 & 17 & 0.160 & 0.009 & 0.179 \\
+    Tmin+Tmax, seed 42 & 8 & 0.113 & 0.009 & 0.138 \\
+    Mean $T$, 3-seed average & 8 & 0.133 & $-0.097$ & 0.165 \\
     \bottomrule
   \end{tabular}
 \end{table}
 
-The 17-donor Midwest run therefore remains the main Lick Creek benchmark. The
-follow-up is useful as a sensitivity check: a smaller donor pool and simpler
-temperature inputs did not improve continuous skill here, even though they cut
-compute a little. Full numbers are in
-\href{https://github.com/krishharma/hydro-tl-ews/blob/main/docs/OBSERVATIONS_OPT.md}{docs/OBSERVATIONS\_OPT.md};
-the runner is
-\href{https://github.com/krishharma/hydro-tl-ews/blob/main/scripts/run_midwest_opt.py}{scripts/run\_midwest\_opt.py}.
+\begin{figure}[ht]
+  \centering
+  \includegraphics[width=0.82\linewidth]{fig_donor_pruning.png}
+  \caption{Seventeen similar donors outperform an 8-donor pool on both
+    fine-tune and walk-forward NSE.}
+  \label{fig:prune}
+\end{figure}
+
+\section{Discussion and conclusion}
+
+This is a one-basin Midwest study on commodity hardware. It does not estimate
+continental CAMELS skill or snowmelt-regime transfer. What it does estimate,
+with a full 2011--2014 evaluation, is whether a small similar-donor prior beats
+local training and naive baselines when local data are scarce. It does.
+
+Warnings are hindcast post-processing of daily flow. F1* uses the same window
+it scores. Daily 1-day probabilities remain overconfident (BSS $=-1.90$) even
+before compounding; recalibrating that 1-day probability is future work.
+
+With two years of local discharge and a laptop, seventeen similar Midwest
+donors are enough for regional transfer to beat both a local LSTM and next-day
+persistence on NSE. Eight donors are worse, not better. Flood Q95 warnings
+discriminate well; the ugly raw Brier numbers at long leads are mostly an
+independence assumption, not a collapse of ranking skill.
+
+\vspace{0.6em}
+{\small
+Midwest run: \texttt{python scripts/run\_midwest\_mini.py}.
+Baselines and figures: \texttt{python scripts/analysis/poster\_from\_csvs.py}.
+Word manuscript: \texttt{python scripts/paper/build\_short\_paper\_docx.py}.
+}
 
 \end{document}

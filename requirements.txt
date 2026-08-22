@@ -6,5 +6,6 @@ torch>=2.0
 shap>=0.44
 matplotlib>=3.7
 pyarrow>=14.0
+python-docx>=1.1
 # Optional — only required for live USGS NWIS pulls
 dataretrieval>=1.0
